@@ -1,0 +1,22 @@
+{
+  "groups": [
+    {
+      "name": "aws.s3",
+      "type": "com.acme.platform.config.properties.S3Properties",
+      "sourceType": "com.acme.platform.config.properties.S3Properties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "aws.s3.bucket",
+      "type": "java.lang.String",
+      "sourceType": "com.acme.platform.config.properties.S3Properties"
+    },
+    {
+      "name": "aws.s3.region",
+      "type": "java.lang.String",
+      "sourceType": "com.acme.platform.config.properties.S3Properties"
+    }
+  ],
+  "hints": []
+}

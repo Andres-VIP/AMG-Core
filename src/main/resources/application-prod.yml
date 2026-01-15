@@ -1,0 +1,8 @@
+logging:
+  level:
+    root: INFO
+
+aws:
+  s3:
+    bucket: ${AWS_S3_BUCKET:prod-bucket}
+    region: ${AWS_REGION:us-east-1}

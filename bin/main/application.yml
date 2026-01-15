@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: AMG-Core
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+aws:
+  s3:
+    bucket: ${AWS_S3_BUCKET:change-me}
+    region: ${AWS_REGION:us-east-1}
