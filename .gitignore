@@ -9,6 +9,7 @@ bin/
 
 # Spring Boot
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 *.ear
 *.class
