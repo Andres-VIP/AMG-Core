@@ -1,6 +1,8 @@
 # AMG-Core
 
-A production-ready Spring Boot microservice built with Java 21 that provides RESTful APIs for example entities (Users and Products) with H2 database, and S3 text object operations. The service is designed for deployment using Docker containers.
+A production-ready Spring Boot microservice built with Java 21
+that provides RESTful APIs for example entities (Users and Products) with H2 database.
+The service is designed for deployment using Docker containers.
 
 ## Technology Stack
 
@@ -11,7 +13,8 @@ A production-ready Spring Boot microservice built with Java 21 that provides RES
 - **ORM**: Spring Data JPA / Hibernate
 - **Reactive**: Spring WebFlux
 - **Caching**: Spring Cache (Simple Cache)
-- **AWS SDK**: AWS SDK for Java v2 (2.25.62) - S3 module
+- **Retry**: Spring Retry (max 3 attempts)
+- **Query**: JPA Specifications for dynamic queries
 - **Container**: Docker (multi-stage build with Alpine Linux)
 - **Testing**: JUnit 5, Mockito, Spring Boot Test
 - **Documentation**: SpringDoc OpenAPI 3 (Swagger UI)
@@ -21,25 +24,51 @@ A production-ready Spring Boot microservice built with Java 21 that provides RES
 
 - RESTful APIs for example entities (Users and Products) with full CRUD operations
 - H2 in-memory database with automatic schema generation
-- **Spring Cache** with cacheable methods for improved performance
-- **Spring WebFlux** reactive endpoints for non-blocking operations
-- RESTful API for S3 text object operations
+- Spring Cache with cacheable methods for improved performance
+- Spring WebFlux reactive endpoints with reactive service layer
+- Spring Retry configured with maximum 3 attempts across all profiles
+- JPA Specifications for dynamic and complex queries
 - Environment-based configuration (dev, staging, production)
 - Comprehensive error handling with proper HTTP status codes
 - Input validation using Jakarta Bean Validation
-- Structured logging for operations and errors
 - Health check endpoints for monitoring
 - Docker containerization with Docker Compose for easy deployment
 - CI/CD ready with GitHub Actions support
-- AWS IAM role-based authentication (no hardcoded credentials)
+
+## Architecture
+
+The application follows a layered architecture pattern:
+
+```
+┌─────────────────────────────────────────┐
+│         REST Controllers Layer          │
+│  (UserController, ProductController,    │
+│   ProductCacheController, etc.)         │
+└─────────────────┬───────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│         Service Layer                    │
+│  (ProductCacheService,                   │
+│   ReactiveProductService,                │
+│   ProductSpecificationService, etc.)     │
+└─────────────────┬───────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│         Repository Layer                 │
+│  (UserRepository, ProductRepository)    │
+│  + JPA Specifications                    │
+└─────────────────┬───────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│         Database Layer                   │
+│  (H2 In-Memory Database)                │
+└─────────────────────────────────────────┘
+```
 
 ## Prerequisites
 
 - **Java 21** (JDK) - LTS version
 - **Docker** and **Docker Compose** (for containerized builds and deployment)
-- **AWS Account** with:
-  - An S3 bucket
-  - IAM role or user with appropriate S3 permissions
 - **Gradle 8+** (optional, for local builds without Docker)
 
 ## Project Structure
@@ -52,12 +81,12 @@ AMG-Core/
 │   │   │   ├── api/                    # REST controllers
 │   │   │   │   ├── exception/         # Global exception handler
 │   │   │   │   ├── HealthController.java
-│   │   │   │   ├── S3Controller.java
 │   │   │   │   ├── UserController.java
-│   │   │   │   └── ProductController.java
-│   │   │   ├── config/                 # Configuration classes
-│   │   │   │   ├── properties/         # Configuration properties
-│   │   │   │   └── S3Config.java       # AWS S3 client configuration
+│   │   │   │   ├── ProductController.java
+│   │   │   │   ├── ProductCacheController.java
+│   │   │   │   ├── ReactiveProductController.java
+│   │   │   │   ├── ProductSpecificationController.java
+│   │   │   │   └── UserSpecificationController.java
 │   │   │   ├── model/                  # JPA entities
 │   │   │   │   ├── User.java
 │   │   │   │   └── Product.java
@@ -65,19 +94,25 @@ AMG-Core/
 │   │   │   │   ├── UserRepository.java
 │   │   │   │   └── ProductRepository.java
 │   │   │   ├── service/                # Business logic
-│   │   │   │   └── S3ObjectService.java
+│   │   │   │   ├── ProductCacheService.java
+│   │   │   │   ├── ReactiveProductService.java
+│   │   │   │   ├── ProductSpecificationService.java
+│   │   │   │   └── UserSpecificationService.java
+│   │   │   ├── specification/          # JPA Specifications
+│   │   │   │   ├── ProductSpecification.java
+│   │   │   │   └── UserSpecification.java
 │   │   │   └── Application.java        # Spring Boot entry point
 │   │   └── resources/
 │   │       ├── application.yml         # Base configuration
 │   │       ├── application-dev.yml     # Development profile
 │   │       ├── application-stg.yml     # Staging profile
-│   │       └── application-prod.yml     # Production profile
+│   │       └── application-prod.yml    # Production profile
 │   └── test/                           # Unit tests
 ├── build.gradle                         # Gradle build configuration
 ├── Dockerfile                           # Multi-stage Docker build
 ├── docker-compose.yml                   # Docker Compose configuration
-├── gradle.properties                    # Gradle settings
-├── settings.gradle                      # Gradle project settings
+├── docs/
+│   └── images/                          # Test evidence and screenshots
 └── README.md
 ```
 
@@ -92,15 +127,36 @@ The application uses H2 in-memory database by default. The H2 console is availab
 - **Password**: (empty)
 - **Schema**: Automatically created on startup using JPA `ddl-auto: update`
 
-### Environment Variables
+#### Using H2 Console
 
-The application uses environment variables for runtime configuration:
+1. Start the application (see [Running the Application](#running-the-application))
+2. Navigate to `http://localhost:8080/h2-console`
+3. Enter connection details:
+   - **JDBC URL**: `jdbc:h2:mem:testdb`
+   - **Username**: `sa`
+   - **Password**: (leave empty)
+4. Click "Connect"
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `AWS_S3_BUCKET` | Yes | `change-me` | S3 bucket name |
-| `AWS_REGION` | No | `us-east-1` | AWS region |
-| `SPRING_PROFILES_ACTIVE` | Recommended | - | Active Spring profile (`dev`, `stg`, `prod`) |
+Once connected, you can execute SQL queries to inspect and manage the database:
+
+```sql
+-- View all users
+SELECT * FROM USERS;
+
+-- View all products
+SELECT * FROM PRODUCTS;
+
+-- View table structure
+SHOW TABLES;
+```
+
+**Expected Behavior:**
+- Tables are automatically created when the application starts
+- Data persists during the application session
+- Data is lost when the application restarts (in-memory database)
+- The console shows query results in a tabular format
+
+![H2 Console](docs/images/h2-console.png)
 
 ### Spring Profiles
 
@@ -112,65 +168,43 @@ The application supports three environment profiles:
 
 Each profile can override default configuration values. Profile-specific settings are defined in `application-{profile}.yml` files.
 
-### AWS Credentials
+### Retry Configuration
 
-The service uses the AWS SDK default credentials provider chain, which checks credentials in the following order:
+The application uses Spring Retry for automatic retry of failed operations:
 
-1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-2. Java system properties
-3. AWS credentials file (`~/.aws/credentials`)
-4. IAM role (when running on AWS infrastructure)
+- **Max Attempts**: 3 (configured in all profiles)
+- **Backoff Delay**: 1000ms between retries
+- **Enabled**: `@EnableRetry` annotation in Application class
 
-**For local development:**
-```bash
-# Option 1: Environment variables
-export AWS_ACCESS_KEY_ID=your-access-key
-export AWS_SECRET_ACCESS_KEY=your-secret-key
+Retry is applied to services using `@Retryable` annotation, particularly in `ProductSpecificationService` and `UserSpecificationService`.
 
-# Option 2: AWS CLI profile
-aws configure --profile default
-```
+### Cache Configuration
 
-**For AWS deployment:**
-Attach an IAM role to your compute resource (EC2, ECS, Lambda) with appropriate S3 permissions. The SDK will automatically use the role's temporary credentials.
+Spring Cache is configured with simple in-memory cache:
 
-### IAM Permissions
+- **Cache Type**: Simple (in-memory)
+- **Cache Names**: `products`, `users`, `productStats`
+- **Annotations**: 
+  - `@Cacheable`: Caches method results
+  - `@CachePut`: Updates cache when saving
+  - `@CacheEvict`: Clears cache when deleting
 
-The IAM role or user needs the following S3 permissions:
+Cache keys follow the pattern: `{cacheName}::{key}` (e.g., `products::1`, `products::all`)
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::your-bucket-name"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:aws:s3:::your-bucket-name/*"
-    }
-  ]
-}
-```
+### WebFlux Configuration
+
+The application uses Spring WebFlux for reactive programming:
+
+- **Reactive Service Layer**: `ReactiveProductService` wraps blocking JPA operations in reactive streams
+- **Scheduler**: Uses `Schedulers.boundedElastic()` for blocking database operations
+- **Types**: 
+  - `Mono<T>`: Represents 0 or 1 result
+  - `Flux<T>`: Represents 0 to N results (stream)
+- **Benefits**: Non-blocking operations, better resource utilization, backpressure handling
 
 ## Running the Application
 
-### Local Development with Gradle
-
-```bash
-# Set environment variables
-export SPRING_PROFILES_ACTIVE=dev
-export AWS_S3_BUCKET=my-dev-bucket
-export AWS_REGION=us-east-1
-
-# Run the application
-./gradlew clean bootRun
-```
-
-### Running with Docker Compose
+### Using Docker Compose (Recommended)
 
 ```bash
 # Start the application
@@ -185,21 +219,23 @@ docker-compose down
 
 The application will be available at `http://localhost:8080`.
 
-### Local Development with Docker
+### Local Development
 
-```bash
-# Build the Docker image
-docker build -t amg-core:local .
+**Note**: For local development, it's recommended to use Docker Compose as shown above. If you need to run without Docker:
 
-# Run the container
-docker run --rm -p 8080:8080 \
-  -e SPRING_PROFILES_ACTIVE=dev \
-  -e AWS_S3_BUCKET=my-dev-bucket \
-  -e AWS_REGION=us-east-1 \
-  -e AWS_ACCESS_KEY_ID=your-key \
-  -e AWS_SECRET_ACCESS_KEY=your-secret \
-  amg-core:local
+**Windows (PowerShell):**
+```powershell
+$env:SPRING_PROFILES_ACTIVE="dev"
+.\gradlew.bat clean bootRun
 ```
+
+**Linux/Mac (Bash):**
+```bash
+export SPRING_PROFILES_ACTIVE=dev
+./gradlew clean bootRun
+```
+
+**Note**: Make sure Docker Desktop is running if using the Docker Compose approach, which is the recommended method.
 
 ### Running Tests
 
@@ -207,217 +243,208 @@ docker run --rm -p 8080:8080 \
 # Run all tests
 ./gradlew test
 
-# Run tests with coverage (if configured)
-./gradlew test jacocoTestReport
+# Windows PowerShell
+.\gradlew test
+
+# Linux/Mac
+./gradlew test
 ```
+
+**Test Coverage:**
+- `ApplicationTest`: Verifies Spring context loads successfully
+- `HealthControllerTest`: Tests health check endpoint
+- Additional tests can be added following the same pattern
+
+## Testing Examples
+
+### Using Postman
+
+The following examples demonstrate how to test the API endpoints using Postman or similar API clients.
+
+#### Creating a User (POST)
+
+**Endpoint**: `POST http://localhost:8080/api/users`
+
+**Request Body:**
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "address": "123 Main Street"
+}
+```
+
+**Expected Response** (201 Created):
+
+![Postman - Create User](docs/images/postman-post-users.png)
+
+#### Getting a User by ID (GET)
+
+**Endpoint**: `GET http://localhost:8080/api/users/1`
+
+**Expected Response** (200 OK):
+
+![Postman - Get User by ID](docs/images/postman-get-user.png)
+
+
+#### Getting Products with Cache (GET)
+
+**Endpoint**: `GET http://localhost:8080/api/cache/products`
+
+**Expected Response** (200 OK):
+
+
+![Postman - Get Products](docs/images/postman-get-products.png)
+
+**Note**: The first call will hit the database, subsequent calls will use the cache for improved performance.
+
+## API Documentation
+
+### Swagger UI
+
+Interactive API documentation is available at:
+- **URL**: `http://localhost:8080/swagger-ui.html`
+
+![Swagger UI](docs/images/swagger-ui.png)
+
+
+Swagger UI provides:
+- Complete API documentation for all endpoints
+- Interactive testing capabilities directly from the browser
+- Request/response examples
+- Schema definitions for all models
+- Try-it-out functionality to test endpoints without external tools
+
+**How to Use:**
+1. Navigate to `http://localhost:8080/swagger-ui.html`
+2. Browse available endpoints organized by controller
+3. Click on any endpoint to expand details
+4. Click "Try it out" to test the endpoint
+5. Fill in parameters and request body (if needed)
+6. Click "Execute" to send the request
+7. View the response with status code, headers, and body
+
+### H2 Console
+
+Database management console:
+- **URL**: `http://localhost:8080/h2-console`
+- **JDBC URL**: `jdbc:h2:mem:testdb`
+- **Username**: `sa`
+- **Password**: (empty)
 
 ## API Endpoints
 
 ### Health Check
 
-- **GET** `/healthz`
-  - Returns: `200 OK` with body `"ok"`
-  - Description: Simple health check endpoint
-
-- **GET** `/actuator/health`
-  - Returns: JSON health status
-  - Description: Spring Boot Actuator health endpoint
+- **GET** `/healthz` - Simple health check (returns `"ok"`)
+- **GET** `/actuator/health` - Spring Boot Actuator health endpoint
 
 ### User Management
 
-- **GET** `/api/users`
-  - Description: Get all users
-  - Returns: `200 OK` with JSON array of users
-  - Example: `GET /api/users`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/users` | Get all users |
+| GET | `/api/users/{id}` | Get user by ID |
+| POST | `/api/users` | Create a new user |
+| PUT | `/api/users/{id}` | Update an existing user |
+| DELETE | `/api/users/{id}` | Delete a user |
 
-- **GET** `/api/users/{id}`
-  - Description: Get user by ID
-  - Path Parameters:
-    - `id` (required): User ID
-  - Returns: `200 OK` with user JSON, or `404 Not Found`
-  - Example: `GET /api/users/1`
-
-- **POST** `/api/users`
-  - Description: Create a new user
-  - Request Body: JSON user object
-    ```json
-    {
-      "name": "John Doe",
-      "email": "john@example.com",
-      "address": "123 Main St"
-    }
-    ```
-  - Returns: `201 Created` with created user, or `409 Conflict` if email exists
-  - Example: `POST /api/users`
-
-- **PUT** `/api/users/{id}`
-  - Description: Update an existing user
-  - Path Parameters:
-    - `id` (required): User ID
-  - Request Body: JSON user object
-  - Returns: `200 OK` with updated user, or `404 Not Found`
-  - Example: `PUT /api/users/1`
-
-- **DELETE** `/api/users/{id}`
-  - Description: Delete a user
-  - Path Parameters:
-    - `id` (required): User ID
-  - Returns: `204 No Content`, or `404 Not Found`
-  - Example: `DELETE /api/users/1`
+**Request Body Example (POST/PUT):**
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "address": "123 Main St"
+}
+```
 
 ### Product Management
 
-- **GET** `/api/products`
-  - Description: Get all products, optionally filtered by name
-  - Query Parameters:
-    - `name` (optional): Filter products by name (case-insensitive)
-  - Returns: `200 OK` with JSON array of products
-  - Example: `GET /api/products` or `GET /api/products?name=laptop`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/products` | Get all products (optional `?name={name}` filter) |
+| GET | `/api/products/{id}` | Get product by ID |
+| POST | `/api/products` | Create a new product |
+| PUT | `/api/products/{id}` | Update an existing product |
+| DELETE | `/api/products/{id}` | Delete a product |
 
-- **GET** `/api/products/{id}`
-  - Description: Get product by ID
-  - Path Parameters:
-    - `id` (required): Product ID
-  - Returns: `200 OK` with product JSON, or `404 Not Found`
-  - Example: `GET /api/products/1`
-
-- **POST** `/api/products`
-  - Description: Create a new product
-  - Request Body: JSON product object
-    ```json
-    {
-      "name": "Laptop",
-      "description": "High-performance laptop",
-      "price": 999.99,
-      "stock": 10
-    }
-    ```
-  - Returns: `201 Created` with created product
-  - Example: `POST /api/products`
-
-- **PUT** `/api/products/{id}`
-  - Description: Update an existing product
-  - Path Parameters:
-    - `id` (required): Product ID
-  - Request Body: JSON product object
-  - Returns: `200 OK` with updated product, or `404 Not Found`
-  - Example: `PUT /api/products/1`
-
-- **DELETE** `/api/products/{id}`
-  - Description: Delete a product
-  - Path Parameters:
-    - `id` (required): Product ID
-  - Returns: `204 No Content`, or `404 Not Found`
-  - Example: `DELETE /api/products/1`
+**Request Body Example (POST/PUT):**
+```json
+{
+  "name": "Laptop",
+  "description": "High-performance laptop",
+  "price": 999.99,
+  "stock": 10
+}
+```
 
 ### Product Management with Cache
 
-These endpoints use Spring Cache for improved performance:
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/cache/products` | Get all products (cached) |
+| GET | `/api/cache/products/{id}` | Get product by ID (cached) |
+| GET | `/api/cache/products/search?name={name}` | Search products by name (cached) |
+| POST | `/api/cache/products` | Create a new product (updates cache) |
+| DELETE | `/api/cache/products/{id}` | Delete a product (clears cache) |
+| GET | `/api/cache/products/stats/total-value` | Calculate total inventory value (cached) |
+| GET | `/api/cache/products/stats/count` | Get product count (cached) |
+| POST | `/api/cache/products/cache/clear` | Manually clear all product caches |
 
-- **GET** `/api/cache/products`
-  - Description: Get all products (cached)
-  - Returns: `200 OK` with JSON array of products
-  - Note: First call hits database, subsequent calls use cache
-
-- **GET** `/api/cache/products/{id}`
-  - Description: Get product by ID (cached)
-  - Returns: `200 OK` with product JSON, or `404 Not Found`
-  - Note: Cached by product ID
-
-- **GET** `/api/cache/products/search?name={name}`
-  - Description: Search products by name (cached)
-  - Query Parameters:
-    - `name` (required): Product name to search
-  - Returns: `200 OK` with JSON array of products
-
-- **POST** `/api/cache/products`
-  - Description: Create a new product (updates cache)
-  - Request Body: JSON product object
-  - Returns: `201 Created` with created product
-
-- **DELETE** `/api/cache/products/{id}`
-  - Description: Delete a product (clears cache)
-  - Returns: `204 No Content`
-
-- **GET** `/api/cache/products/stats/total-value`
-  - Description: Calculate total inventory value (cached)
-  - Returns: `200 OK` with total value
-  - Example: `{"totalValue": 9999.99}`
-
-- **GET** `/api/cache/products/stats/count`
-  - Description: Get product count (cached)
-  - Returns: `200 OK` with count
-  - Example: `{"count": 10}`
-
-- **POST** `/api/cache/products/cache/clear`
-  - Description: Manually clear all product caches
-  - Returns: `200 OK` with success message
+**Cache Behavior:**
+- First call: Executes method and stores result in cache
+- Subsequent calls: Returns cached value (no method execution)
+- Cache eviction: Automatically cleared on delete/update operations
 
 ### Reactive Product Endpoints (WebFlux)
 
-These endpoints use Spring WebFlux for reactive/non-blocking operations:
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/reactive/products` | Get all products reactively (NDJSON stream) |
+| GET | `/api/reactive/products/{id}` | Get product by ID reactively |
+| GET | `/api/reactive/products/search?name={name}` | Search products by name reactively |
+| POST | `/api/reactive/products` | Create a new product reactively |
+| PUT | `/api/reactive/products/{id}` | Update a product reactively |
+| DELETE | `/api/reactive/products/{id}` | Delete a product reactively |
+| GET | `/api/reactive/products/count` | Get total product count reactively |
+| GET | `/api/reactive/products/stream?delaySeconds={seconds}` | Stream products with Server-Sent Events |
 
-- **GET** `/api/reactive/products`
-  - Description: Get all products reactively
-  - Returns: `200 OK` with NDJSON stream of products
-  - Content-Type: `application/x-ndjson`
+**WebFlux Benefits:**
+- Non-blocking operations for better concurrency
+- Reactive streams with backpressure support
+- Efficient resource utilization
+- Server-Sent Events for real-time streaming
 
-- **GET** `/api/reactive/products/{id}`
-  - Description: Get product by ID reactively
-  - Returns: `200 OK` with product JSON, or `404 Not Found`
+### JPA Specifications Endpoints
 
-- **POST** `/api/reactive/products`
-  - Description: Create a new product reactively
-  - Request Body: JSON product object
-  - Returns: `201 Created` with created product
+#### Product Specifications
 
-- **GET** `/api/reactive/products/stream`
-  - Description: Stream products with Server-Sent Events
-  - Returns: `200 OK` with text/event-stream
-  - Note: Products are streamed one per second for demonstration
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/spec/products/search` | Search with filters (`name`, `minPrice`, `maxPrice`, `minStock`) |
+| GET | `/api/spec/products/in-stock` | Get all products in stock |
+| GET | `/api/spec/products/out-of-stock` | Get all products out of stock |
+| GET | `/api/spec/products/price-range` | Get products within price range (`minPrice`, `maxPrice`) |
+| GET | `/api/spec/products/description?description={text}` | Get products by description containing text |
 
-### S3 Operations
+#### User Specifications
 
-- **GET** `/api/s3/keys?prefix={optional}`
-  - Description: List all object keys in the S3 bucket
-  - Query Parameters:
-    - `prefix` (optional): Filter keys by prefix
-  - Returns: `200 OK` with JSON array of key strings
-  - Example: `GET /api/s3/keys?prefix=folder/`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/spec/users/search` | Search with filters (`name`, `email`, `address`) |
+| GET | `/api/spec/users/with-address` | Get all users with address |
+| GET | `/api/spec/users/without-address` | Get all users without address |
 
-- **POST** `/api/s3/text?key={key}`
-  - Description: Upload a text object to S3
-  - Query Parameters:
-    - `key` (required): S3 object key
-  - Request Body: Plain text (`text/plain`)
-  - Returns: `202 Accepted`
-  - Example: `POST /api/s3/text?key=documents/readme.txt` with body `"Hello World"`
-
-- **GET** `/api/s3/text?key={key}`
-  - Description: Download a text object from S3
-  - Query Parameters:
-    - `key` (required): S3 object key
-  - Returns: `200 OK` with plain text content
-  - Example: `GET /api/s3/text?key=documents/readme.txt`
-
-### API Documentation
-
-When running the application, Swagger UI is available at:
-- **GET** `/swagger-ui.html` - Interactive API documentation
-
-### H2 Database Console
-
-The H2 database console is available at:
-- **GET** `/h2-console` - H2 database management console
+**Note**: All specification endpoints use retry (max 3 attempts).
 
 ## Error Handling
 
 The application includes comprehensive error handling:
 
 - **400 Bad Request**: Invalid input parameters or validation failures
-- **404 Not Found**: Resource does not exist (user, product, or S3 object)
+- **404 Not Found**: Resource does not exist
 - **409 Conflict**: Resource conflict (e.g., duplicate email)
-- **500 Internal Server Error**: Unexpected errors or operation failures
+- **500 Internal Server Error**: Unexpected errors
 
 Error responses follow this format:
 ```json
@@ -443,77 +470,16 @@ The executable JAR will be created in `build/libs/AMG-Core-0.0.1.jar`
 docker build -t amg-core:0.0.1 .
 ```
 
-The Dockerfile uses a multi-stage build:
-1. Build stage: Uses Gradle to compile and package the application
-2. Runtime stage: Uses Alpine Linux with JRE 21 for minimal image size
+The Dockerfile uses a multi-stage build with Alpine Linux for minimal image size.
 
-## CI/CD with GitHub Actions
+## CI/CD
 
-The project is configured for CI/CD using GitHub Actions with AWS OIDC authentication.
+The project includes a GitHub Actions workflow (`.github/workflows/ci-cd.yml`) that:
 
-### Required GitHub Secrets
+1. Runs tests on every push and pull request
+2. Builds the Docker image
 
-- `AWS_ACCOUNT_ID`: Your 12-digit AWS account ID
-
-### Workflow Configuration
-
-Update the workflow file (`.github/workflows/ci-cd.yml`) with:
-
-- `role-to-assume`: IAM role ARN for GitHub OIDC
-- `ECR_REPOSITORY`: Amazon ECR repository name
-- `AWS_REGION`: Target AWS region
-
-### Workflow Steps
-
-1. Checkout code
-2. Set up Java 21
-3. Run tests
-4. Build application
-5. Build Docker image
-6. Authenticate to AWS ECR using OIDC
-7. Push Docker image to ECR
-8. Deploy (ECS, Elastic Beanstalk, etc.)
-
-## Deployment to AWS
-
-### Amazon ECS
-
-1. Push Docker image to ECR (via CI/CD or manually)
-2. Create ECS task definition referencing the ECR image
-3. Create ECS service with the task definition
-4. Ensure ECS task role has S3 permissions
-
-### AWS Elastic Beanstalk
-
-1. Build and push Docker image to ECR
-2. Create Elastic Beanstalk application
-3. Create environment with Docker platform
-4. Configure environment variables
-5. Deploy using EB CLI or console
-
-### AWS Lambda
-
-1. Package as JAR (not Docker for Lambda)
-2. Create Lambda function with Java 21 runtime
-3. Configure execution role with S3 permissions
-4. Set environment variables
-5. Configure API Gateway if needed
-
-### Environment Variables for Deployment
-
-Set these in your deployment platform:
-
-```bash
-SPRING_PROFILES_ACTIVE=prod
-AWS_S3_BUCKET=your-production-bucket
-AWS_REGION=us-east-1
-```
-
-**Note**: Do not set `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` when using IAM roles.
-
-## Monitoring and Observability
-
-### Actuator Endpoints
+## Monitoring
 
 The application exposes Spring Boot Actuator endpoints:
 
@@ -522,56 +488,6 @@ The application exposes Spring Boot Actuator endpoints:
 - `/actuator/metrics` - Application metrics
 - `/actuator/prometheus` - Prometheus metrics format
 
-### Logging
-
-The application uses SLF4J with Logback for structured logging. Log levels can be configured per profile in the YAML files.
-
-## Development
-
-### Code Style
-
-- Follow Java naming conventions
-- Use dependency injection (constructor injection preferred)
-- Keep services focused and single-responsibility
-- Write unit tests for business logic
-- Use meaningful variable and method names
-
-### Testing
-
-- Unit tests use JUnit 5 and Mockito
-- Controller tests use `@WebMvcTest` for isolated testing
-- Service tests use `@ExtendWith(MockitoExtension.class)` for pure unit testing
-- Integration tests can use `@SpringBootTest` for full context
-
-## Troubleshooting
-
-### Common Issues
-
-**Issue**: `S3Exception: Access Denied`
-- **Solution**: Verify IAM role/user has correct S3 permissions and bucket policy
-
-**Issue**: `NoSuchKeyException` when getting objects
-- **Solution**: Verify the object key exists and is correct (case-sensitive)
-
-**Issue**: Application fails to start with credential errors
-- **Solution**: Ensure AWS credentials are configured via environment variables, credentials file, or IAM role
-
-**Issue**: Docker build fails
-- **Solution**: Ensure Docker has sufficient resources and network access to download dependencies
-
-## Security Considerations
-
-- Never commit AWS credentials to the repository
-- Use IAM roles instead of access keys when possible
-- Enable MFA for IAM users with console access
-- Restrict S3 bucket policies to minimum required permissions
-- Use environment-specific configurations
-- Keep dependencies updated for security patches
-
 ## License
 
 Proprietary. Internal use only.
-
-## Support
-
-For issues, questions, or contributions, please contact the development team.

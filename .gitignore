@@ -14,8 +14,6 @@ bin/
 *.ear
 *.class
 
-# AWS
-.aws/
 
 # Environment variables
 .env
