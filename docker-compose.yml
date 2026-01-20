@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  amg-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amg-core
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+    restart: unless-stopped
+

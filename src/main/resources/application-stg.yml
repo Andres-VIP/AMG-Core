@@ -1,0 +1,7 @@
+logging:
+  level:
+    root: INFO
+
+spring:
+  retry:
+    max-attempts: 3
